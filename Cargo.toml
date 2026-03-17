@@ -1,0 +1,13 @@
+[package]
+name = "vamorasys"
+version = "1.0.0"
+edition = "2021"
+description = "VamoraSys — Configuration Engine for VamoraOS"
+authors = ["Vamora Project"]
+
+[[bin]]
+name = "vamorasys"
+path = "src/main.rs"
+
+[dependencies]
+# No external dependencies — pure Rust stdlib only
