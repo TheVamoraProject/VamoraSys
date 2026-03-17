@@ -26,7 +26,6 @@ User config  >  System default
 
 - Each user has their own config folder
 - System provides fallback defaults
-- Only overridden values are stored per user
 
 ---
 
@@ -40,8 +39,7 @@ FONT_FAMILY="JetBrains Mono"
 
 **Rules:**
 - Keys are `SCREAMING_SNAKE_CASE` — always
-- Multi-word keys use a single underscore: `FONT_FAMILY`, `DARK_MODE`
-- Values are always double-quoted, no exceptions
+- Multi-word keys use underscores: `FONT_FAMILY`, `DARK_MODE`
 - One key per line
 - Lines starting with `#` are comments, preserved across reads/writes
 
@@ -51,16 +49,16 @@ FONT_FAMILY="JetBrains Mono"
 
 VamoraSys ships with **zero categories**. They are created entirely by apps and components installed on top of VamoraOS.
 
-- A fresh system may have no categories at all
+- A fresh system **MAY** have no categories at all
 - Categories appear when apps are installed
 - VamoraSys does not validate category names — it treats them as plain directories
 - Apps are responsible for creating and documenting their own category structure
 
-**Example:** if a Vamora Desktop Environment is installed, it might create:
+**Example:** if Vamora Desktop Environment is installed, it might create:
 
 ```
 /etc/VamoraSys/default/theme/settings.vmf
-/etc/VamoraSys/default/ui/settings.vmf
+/etc/VamoraSys/default/colors/settings.vmf
 /etc/VamoraSys/default/fonts/settings.vmf
 ```
 
@@ -75,7 +73,7 @@ VamoraSys ships with **zero categories**. They are created entirely by apps and 
 ## Directory layout
 
 ```
-/etc/VamoraSys/default/          System defaults (root-owned)
+/etc/VamoraSys/default/          System defaults/tamplate for user settings (root-owned)
 └── <category>/
     └── settings.vmf
 
@@ -85,13 +83,10 @@ VamoraSys ships with **zero categories**. They are created entirely by apps and 
 /etc/VamoraSys/utilities/        System utilities
 └── <utility>
 
-~/.vamorasys/                    User overrides (per-user)
+~/.vamorasys/                    User settings (per-user)
 └── <category>/
     └── settings.vmf
 
-/etc/skel/.vamorasys/            Template for new users (optional)
-└── <category>/
-    └── settings.vmf
 ```
 
 ---
@@ -130,7 +125,7 @@ Operates directly on any `.vmf` file. Bypasses the layer system entirely — use
 vamorasys exec <thing>
 ```
 
-Executes `/etc/VamoraSys/bin/<thing>`. A simple, consistent way to run VamoraOS system binaries without needing to know their full path.
+Executes `/etc/VamoraSys/bin/<thing>`. A simple, consistent way to run VamoraSys system binaries without needing to know their full path. (vamorasys do sometimes ship with some of those)
 
 ### Mode 5 — Execute a utility
 
@@ -138,7 +133,7 @@ Executes `/etc/VamoraSys/bin/<thing>`. A simple, consistent way to run VamoraOS 
 vamorasys utility <thing>
 ```
 
-Executes `/etc/VamoraSys/utilities/<thing>`. Same idea as `exec`, but for utilities — lighter tools and helpers that ship with VamoraOS components.
+Executes `/etc/VamoraSys/utilities/<thing>`. Same idea as `exec`, but for utilities — lighter tools and helpers that ship with VamoraOS components.(vamorasys do sometimes ship with some of those)
 
 ---
 
@@ -234,24 +229,12 @@ Internally:
 
 ---
 
-## /etc/skel integration (optional)
-
-Pre-populate configs for new users by placing defaults in:
-
-```
-/etc/skel/.vamorasys/
-```
-
-When a new user is created with `useradd -m`, the system automatically copies `/etc/skel/*` into their home directory — giving them a pre-configured baseline without any extra tooling.
-
----
-
 ## Behavior reference
 
 | Situation | Behavior |
 |-----------|----------|
 | New user, no commands run yet | Nothing created |
-| First command runs | `~/.vamorasys/` created automatically |
+| First vamorasys command runs (by user or by app) | `~/.vamorasys/` created automatically |
 | Category missing from user layer | Copied from system default |
 | Key missing from user layer | Falls back to system default |
 | Key missing from both layers | Fails with error |
@@ -307,3 +290,4 @@ vamorasys utility fetch-updates
 - **Layer transparency** — `list` always shows the fully resolved merge
 - **App-driven** — VamoraSys is infrastructure; apps own their config structure
 - **Single entry point** — settings, file editing, and execution all go through one binary
+- **No version** _ The main vamorasys binary never changes
