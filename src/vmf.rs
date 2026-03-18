@@ -3,7 +3,8 @@ use std::fs;
 use std::path::Path;
 use crate::cli::VamoraError;
 
-
+/// A parsed VMF entry — either a comment/blank line (preserved as-is)
+/// or a key=value pair.
 #[derive(Debug, Clone)]
 enum VmfLine {
     Comment(String),
@@ -19,7 +20,7 @@ pub enum VmfAction {
     List,
 }
 
-/// turn a .vmf file into a list of lines
+/// Parse a .vmf file into a list of lines (preserving comments and blanks).
 fn parse_file(path: &Path) -> Result<Vec<VmfLine>, VamoraError> {
     let content = fs::read_to_string(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
@@ -37,11 +38,13 @@ fn parse_file(path: &Path) -> Result<Vec<VmfLine>, VamoraError> {
         } else if trimmed.starts_with('#') {
             lines.push(VmfLine::Comment(raw.to_string()));
         } else {
+            // KEY="VALUE" or KEY=VALUE
             let eq = trimmed.find('=').ok_or_else(|| {
                 VamoraError::new(4, format!("invalid VMF syntax at line {}: '{}'", i + 1, raw))
             })?;
             let key = trimmed[..eq].trim().to_string();
             let raw_val = trimmed[eq + 1..].trim();
+            // Strip surrounding quotes if present
             let value = if (raw_val.starts_with('"') && raw_val.ends_with('"'))
                 || (raw_val.starts_with('\'') && raw_val.ends_with('\''))
             {
@@ -59,6 +62,7 @@ fn parse_file(path: &Path) -> Result<Vec<VmfLine>, VamoraError> {
     Ok(lines)
 }
 
+/// Serialize VMF lines back to a string.
 fn serialize(lines: &[VmfLine]) -> String {
     lines
         .iter()
@@ -82,8 +86,9 @@ fn write_file(path: &Path, lines: &[VmfLine]) -> Result<(), VamoraError> {
     })
 }
 
+// ─── Public API ───────────────────────────────────────────────────────────────
 
-// Public API
+/// Read a single key from a VMF file. Returns None if key not present.
 pub fn get_key(path: &Path, key: &str) -> Result<Option<String>, VamoraError> {
     if !path.exists() {
         return Ok(None);
@@ -99,7 +104,7 @@ pub fn get_key(path: &Path, key: &str) -> Result<Option<String>, VamoraError> {
     Ok(None)
 }
 
-
+/// Write (put) a key into a VMF file. Creates the file if it doesn't exist.
 pub fn put_key(path: &Path, key: &str, value: &str) -> Result<(), VamoraError> {
     let mut lines = if path.exists() { parse_file(path)? } else { Vec::new() };
 
@@ -123,7 +128,7 @@ pub fn put_key(path: &Path, key: &str, value: &str) -> Result<(), VamoraError> {
     write_file(path, &lines)
 }
 
-
+/// Delete a key from a VMF file. Returns true if key was found and removed.
 pub fn delete_key(path: &Path, key: &str) -> Result<bool, VamoraError> {
     if !path.exists() {
         return Ok(false);
@@ -145,6 +150,7 @@ pub fn delete_key(path: &Path, key: &str) -> Result<bool, VamoraError> {
     Ok(removed)
 }
 
+/// List all key=value entries in a VMF file as a vector of (key, value) pairs.
 pub fn list_keys(path: &Path) -> Result<Vec<(String, String)>, VamoraError> {
     if !path.exists() {
         return Ok(Vec::new());
@@ -162,7 +168,7 @@ pub fn list_keys(path: &Path) -> Result<Vec<(String, String)>, VamoraError> {
         .collect())
 }
 
-
+/// Print the full raw VMF content (with comments and blanks) to stdout.
 pub fn print_raw(path: &Path) -> Result<(), VamoraError> {
     if !path.exists() {
         return Ok(());
@@ -172,7 +178,7 @@ pub fn print_raw(path: &Path) -> Result<(), VamoraError> {
     Ok(())
 }
 
-// Direct VMF editing
+// ─── Mode 3: Direct VMF editing ───────────────────────────────────────────────
 
 pub fn handle_direct(
     file: &str,
@@ -191,7 +197,7 @@ pub fn handle_direct(
         }
         VmfAction::Put => {
             let v = value.ok_or_else(|| VamoraError::new(1, "put requires a value"))?;
-            
+            // Ensure parent dir exists
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
                     fs::create_dir_all(parent).map_err(|e| {
