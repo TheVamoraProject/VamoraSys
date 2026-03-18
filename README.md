@@ -26,6 +26,7 @@
   - [exec](#exec)
   - [utility](#utility)
   - [check](#check)
+  - [info](#info)
 - [Auto-Initialization](#-auto-initialization)
 - [Behavior Reference](#-behavior-reference)
 - [Exit Codes](#-exit-codes)
@@ -50,7 +51,9 @@ Each user has their own config folder under `~/.vamorasys/`. The system provides
 ```
 /etc/VamoraSys/default/     System defaults / templates (root-owned)
 └── <category>/
-    └── settings.vmf
+    ├── settings.vmf        ← default sub-category
+    ├── colors.vmf
+    └── fonts.vmf
 
 /etc/VamoraSys/bin/         System executables
 └── <binary>
@@ -60,8 +63,12 @@ Each user has their own config folder under `~/.vamorasys/`. The system provides
 
 ~/.vamorasys/               User settings (per-user)
 └── <category>/
-    └── settings.vmf
+    ├── settings.vmf
+    ├── colors.vmf
+    └── fonts.vmf
 ```
+
+Each `.vmf` file inside a category folder is a **sub-category**. The file `settings.vmf` is the default sub-category used when none is specified.
 
 ---
 
@@ -93,45 +100,72 @@ Reads and writes settings through the layer system.
 
 ```bash
 # User layer (default)
-vamorasys settings <action> <category> <key> [value]
+vamorasys settings <action> <category> [subcategory] <key> [value]
 
 # System layer (requires root)
-vamorasys settings <action> <category> <key> [value] --system
+vamorasys settings <action> <category> [subcategory] <key> [value] --system
 ```
+
+The `subcategory` is optional. When omitted, the command targets `settings.vmf`. When provided, it targets `<subcategory>.vmf` inside the category folder.
+
+```
+vamorasys settings get theme COLOR          →  theme/settings.vmf
+vamorasys settings get theme colors COLOR   →  theme/colors.vmf
+```
+
+---
 
 #### `put` — Add or update a key
 
 ```bash
+# Default sub-category (settings.vmf)
 vamorasys settings put theme COLOR Red
+
+# Explicit sub-category (colors.vmf)
+vamorasys settings put theme colors COLOR Red
 ```
 
 Creates the key if it doesn't exist, updates it if it does. Idempotent.
+
+---
 
 #### `get` — Read a value
 
 ```bash
 vamorasys settings get theme COLOR
 # Red
+
+vamorasys settings get theme colors COLOR
+# Red
 ```
 
 Outputs the bare value to stdout. Checks user layer first, falls back to system default. Useful in scripts:
 
 ```bash
-BG=$(vamorasys settings get theme COLOR)
+BG=$(vamorasys settings get theme colors COLOR)
 ```
+
+---
 
 #### `delete` — Remove a key
 
 ```bash
 vamorasys settings delete theme COLOR
+vamorasys settings delete theme colors COLOR
 ```
 
 Removes the key from the user layer only. After deletion, `get` falls back to the system default if one exists.
 
-#### `list` — Show all settings for a category
+---
+
+#### `list` — Show all settings for a category or sub-category
 
 ```bash
+# List the default sub-category (settings.vmf)
 vamorasys settings list theme
+
+# List a specific sub-category (colors.vmf)
+vamorasys settings list theme colors
 ```
 
 ```
@@ -149,13 +183,14 @@ Shows the fully merged result — user values where set, system defaults where n
 Operates directly on any `.vmf` file, bypassing the layer system entirely. Useful for app installers and scripts.
 
 ```bash
-vamorasys vmf <file> <action> <key> [value]
+vamorasys vmf <file> <action> [key] [value]
 ```
 
 **Example:**
 
 ```bash
-vamorasys vmf /etc/VamoraSys/default/theme/settings.vmf list
+vamorasys vmf /etc/VamoraSys/default/theme/colors.vmf list
+vamorasys vmf /etc/VamoraSys/default/theme/colors.vmf put COLOR Blue
 ```
 
 ---
@@ -186,13 +221,27 @@ Same idea as `exec`, but for lighter tools and helpers that ship with VamoraOS c
 
 ### `check`
 
-Ensures a category exists in the user config. If it doesn't, copies it from the system default.
+Ensures a category (or specific sub-category) exists in the user config. If it doesn't, copies it from the system default.
 
 ```bash
+# Ensure the whole category is initialized
 vamorasys check theme
+
+# Ensure a specific sub-category file exists
+vamorasys check theme colors
 ```
 
 Useful in app post-install scripts that need to guarantee a category is present before writing to it.
+
+---
+
+### `info`
+
+Prints VamoraSys version, paths, and design summary.
+
+```bash
+vamorasys info
+```
 
 ---
 
@@ -204,16 +253,18 @@ On any command that touches the user layer:
 
 1. Does `~/.vamorasys/` exist? → No: create it
 2. Does `~/.vamorasys/<category>/` exist? → No: copy from `/etc/VamoraSys/default/<category>/`
-3. Proceed with the command
+3. If a sub-category is specified and its `.vmf` file is missing → copy that file from the system default
+4. Proceed with the command
 
-**Example — internal flow for `vamorasys settings get theme COLOR`:**
+**Example — internal flow for `vamorasys settings get theme colors COLOR`:**
 
 ```
-1. Check ~/.vamorasys/ exists       → create if not
-2. Check ~/.vamorasys/theme/ exists → copy from /etc/VamoraSys/default/theme/ if not
-3. Check user layer for COLOR
-4. Not found → fall back to system default
-5. Output value
+1. Check ~/.vamorasys/ exists              → create if not
+2. Check ~/.vamorasys/theme/ exists        → copy from /etc/VamoraSys/default/theme/ if not
+3. Check ~/.vamorasys/theme/colors.vmf     → copy from system default if not
+4. Check user layer for COLOR
+5. Not found → fall back to system default
+6. Output value
 ```
 
 ---
@@ -225,6 +276,7 @@ On any command that touches the user layer:
 | New user, no commands run yet | Nothing created |
 | First `vamorasys` command runs | `~/.vamorasys/` created automatically |
 | Category missing from user layer | Copied from system default |
+| Sub-category file missing from user layer | That `.vmf` file copied from system default |
 | Key missing from user layer | Falls back to system default |
 | Key missing from both layers | ❌ Fails with error |
 | `--system` flag | Reads/writes `/etc/VamoraSys/default/` instead |
@@ -250,17 +302,22 @@ On any command that touches the user layer:
 ```bash
 # App installer registers system defaults
 vamorasys settings put theme COLOR "Blue" --system
-vamorasys settings put theme DARK_MODE "false" --system
+vamorasys settings put theme colors ACCENT "#8B5CF6" --system
+vamorasys settings put theme fonts FONT_FAMILY "JetBrains Mono" --system
 
 # User customizes their own config
 vamorasys settings put theme COLOR "Red"
-vamorasys settings put theme DARK_MODE "true"
+vamorasys settings put theme colors ACCENT "#EF4444"
 
-# A script reads the resolved value
+# A script reads the resolved values
 COLOR=$(vamorasys settings get theme COLOR)
+ACCENT=$(vamorasys settings get theme colors ACCENT)
 
 # Direct VMF editing (bypasses layer system)
-vamorasys vmf /etc/VamoraSys/default/theme/settings.vmf list
+vamorasys vmf /etc/VamoraSys/default/theme/colors.vmf list
+
+# Ensure a sub-category exists before writing to it
+vamorasys check theme fonts
 
 # Run a system binary
 vamorasys exec vamora-hello
@@ -271,47 +328,7 @@ vamorasys utility fetch-updates
 
 ---
 
-## 🎯 Design Principles# VamoraSys — Configuration Engine
-
-**Component of VamoraOS · Concept Specification**
-
----
-
-## Overview
-
-**VamoraSys** is the configuration engine of VamoraOS, designed to manage `.vmf` files through a clean command-line interface.
-
-It supports:
-- Fast config editing
-- Per-user customization
-- System defaults with smart fallback
-- System binary and utility execution
-
----
-
-## Core concept
-
-VamoraSys uses a **layered configuration system**:
-
-```
-User config  >  System default
-```
-
-- Each user has their own config folder
-- System provides fallback defaults
-
----
-
-## VMF format
-
-```ini
-COLOR="Blue"
-DARK_MODE="true"
-FONT_FAMILY="JetBrains Mono"
-```
-
-**Rules:**
-
+## 🎯 Design Principles
 
 - 🚫 **No daemon** — `vamorasys` is a stateless binary that reads and writes files directly
 - 🔗 **Composable** — stdout output, predictable exit codes, plays well with pipes and scripts
