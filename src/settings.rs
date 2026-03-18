@@ -23,8 +23,7 @@ fn system_vmf(category: &str) -> PathBuf {
     PathBuf::from(SYSTEM_BASE).join(category).join("settings.vmf")
 }
 
-/// Auto-initialization: ensure ~/.vamorasys/ and the category dir exist.
-/// Copies from system default if category is missing.
+///check categories and make them
 fn ensure_user_category(category: &str) -> Result<(), VamoraError> {
     let base = user_base()?;
     if !base.exists() {
@@ -39,7 +38,7 @@ fn ensure_user_category(category: &str) -> Result<(), VamoraError> {
         if sys_dir.exists() {
             copy_dir(&sys_dir, &cat_dir)?;
         } else {
-            // No system default — just create the empty dir
+            // create the empty folder
             fs::create_dir_all(&cat_dir).map_err(|e| {
                 VamoraError::new(3, format!("cannot create '{}': {}", cat_dir.display(), e))
             })?;
@@ -68,7 +67,6 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<(), VamoraError> {
     Ok(())
 }
 
-// ─── Public interface ─────────────────────────────────────────────────────────
 
 pub fn handle(
     action: SettingsAction,
@@ -98,12 +96,12 @@ fn handle_user(
     match action {
         SettingsAction::Get => {
             let k = key.unwrap();
-            // Check user layer first
+            // Check user side
             if let Some(v) = vmf::get_key(&user_path, k)? {
                 println!("{}", v);
                 return Ok(());
             }
-            // Fallback to system
+            // Fallback to deafult 
             if let Some(v) = vmf::get_key(&sys_path, k)? {
                 println!("{}", v);
                 return Ok(());
@@ -114,7 +112,6 @@ fn handle_user(
         SettingsAction::Put => {
             let k = key.unwrap();
             let v = value.unwrap();
-            // Ensure the vmf file's parent dir exists
             if let Some(parent) = user_path.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent).map_err(|e| {
@@ -135,18 +132,15 @@ fn handle_user(
         }
 
         SettingsAction::List => {
-            // Merge: system base, then overwrite with user values
             let mut merged: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-            let mut order: Vec<String> = Vec::new(); // preserve insertion order
-
-            // Load system defaults first
+            let mut order: Vec<String> = Vec::new();
             for (k, v) in vmf::list_keys(&sys_path)? {
                 if !merged.contains_key(&k) {
                     order.push(k.clone());
                 }
                 merged.insert(k, v);
             }
-            // Overwrite with user values
+            
             for (k, v) in vmf::list_keys(&user_path)? {
                 if !merged.contains_key(&k) {
                     order.push(k.clone());
@@ -188,7 +182,6 @@ fn handle_system(
             }
             let k = key.unwrap();
             let v = value.unwrap();
-            // Ensure dir exists
             if let Some(parent) = sys_path.parent() {
                 if !parent.exists() {
                     fs::create_dir_all(parent).map_err(|e| {
@@ -220,13 +213,13 @@ fn handle_system(
     }
 }
 
-/// `vamorasys check <category>` — ensure category exists in user layer.
+/// `Check commans i think
 pub fn check(category: &str) -> Result<(), VamoraError> {
     ensure_user_category(category)?;
     Ok(())
 }
 
-// ─── Minimal uid check via libc extern, no crate needed ──────────────────────
+// Whats dat
 
 #[cfg(unix)]
 fn get_uid() -> u32 {
