@@ -85,7 +85,7 @@ impl Cli {
             }
 
             "vmf" => {
-                // vamorasys vmf <file> <action> <key> [value]
+                // vamorasys vmf command
                 let file = args.get(1).ok_or_else(|| {
                     VamoraError::new(1, "usage: vamorasys vmf <file> <action> <key> [value]")
                 })?;
@@ -95,7 +95,7 @@ impl Cli {
 
                 let action = match action_str.as_str() {
                     "list" => {
-                        // list doesn't need a key
+                        
                         return Ok(Cli {
                             command: Command::Vmf {
                                 file: file.clone(),
@@ -131,7 +131,7 @@ impl Cli {
             }
 
             "settings" => {
-                // vamorasys settings <action> <category> [key] [value] [--system]
+                // vamorasys settings command
                 let system = args.contains(&"--system".to_string());
                 let filtered: Vec<&String> = args.iter().filter(|a| a.as_str() != "--system").collect();
 
