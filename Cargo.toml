@@ -2,7 +2,7 @@
 name = "vamorasys"
 version = "1.0.0"
 edition = "2021"
-description = "VamoraSys — Configuration Engine for VamoraOS"
+description = "Config Engine for VamoraOS"
 authors = ["TheVamoraProject"]
 
 [[bin]]
