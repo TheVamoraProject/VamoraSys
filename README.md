@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/github/license/TheVamoraProject/VamoraSys?style=flat-square&color=green)](https://github.com/TheVamoraProject/VamoraSys/blob/main/LICENSE)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/TheVamoraProject/VamoraSys/build.yml?style=flat-square)](https://github.com/TheVamoraProject/VamoraSys/actions)
 
-*A component of [VamoraOS](https://vamora.vercel.app)*
+*A component of [VamoraOS](https://vamora.vercel.app/projects/vamoraos)*
 
 </div>
 
@@ -99,7 +99,7 @@ vamorasys settings <action> <category> <key> [value]
 vamorasys settings <action> <category> <key> [value] --system
 ```
 
-#### `put` — ✏️ Add or update a key
+#### `put` — Add or update a key
 
 ```bash
 vamorasys settings put theme COLOR Red
@@ -107,7 +107,7 @@ vamorasys settings put theme COLOR Red
 
 Creates the key if it doesn't exist, updates it if it does. Idempotent.
 
-#### `get` — 🔍 Read a value
+#### `get` — Read a value
 
 ```bash
 vamorasys settings get theme COLOR
@@ -120,7 +120,7 @@ Outputs the bare value to stdout. Checks user layer first, falls back to system 
 BG=$(vamorasys settings get theme COLOR)
 ```
 
-#### `delete` — 🗑️ Remove a key
+#### `delete` — Remove a key
 
 ```bash
 vamorasys settings delete theme COLOR
@@ -128,7 +128,7 @@ vamorasys settings delete theme COLOR
 
 Removes the key from the user layer only. After deletion, `get` falls back to the system default if one exists.
 
-#### `list` — 📃 Show all settings for a category
+#### `list` — Show all settings for a category
 
 ```bash
 vamorasys settings list theme
@@ -271,7 +271,47 @@ vamorasys utility fetch-updates
 
 ---
 
-## 🎯 Design Principles
+## 🎯 Design Principles# VamoraSys — Configuration Engine
+
+**Component of VamoraOS · Concept Specification**
+
+---
+
+## Overview
+
+**VamoraSys** is the configuration engine of VamoraOS, designed to manage `.vmf` files through a clean command-line interface.
+
+It supports:
+- Fast config editing
+- Per-user customization
+- System defaults with smart fallback
+- System binary and utility execution
+
+---
+
+## Core concept
+
+VamoraSys uses a **layered configuration system**:
+
+```
+User config  >  System default
+```
+
+- Each user has their own config folder
+- System provides fallback defaults
+
+---
+
+## VMF format
+
+```ini
+COLOR="Blue"
+DARK_MODE="true"
+FONT_FAMILY="JetBrains Mono"
+```
+
+**Rules:**
+
 
 - 🚫 **No daemon** — `vamorasys` is a stateless binary that reads and writes files directly
 - 🔗 **Composable** — stdout output, predictable exit codes, plays well with pipes and scripts
@@ -284,5 +324,5 @@ vamorasys utility fetch-updates
 ---
 
 <div align="center">
-  <sub>Part of the <a href="https://vamora.vercel.app">VamoraOS</a> ecosystem · <a href="https://github.com/TheVamoraProject/VamoraSys">TheVamoraProject/VamoraSys</a></sub>
+  <sub>Part of the <a href="https://vamora.vercel.app">Vamora</a> ecosystem · <a href="https://github.com/TheVamoraProject/VamoraSys">TheVamoraProject/VamoraSys</a></sub>
 </div>
