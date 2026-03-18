@@ -79,9 +79,7 @@ fn run_from_dir(dir: &str, name: &str, kind: &str) -> Result<(), cli::VamoraErro
 
 fn print_info() {
     println!("VamoraSys — Configuration Engine");
-    println!("Component of VamoraOS");
     println!();
-    println!("  Version  : 1.0.0");
     println!("  Format   : VMF (Vamora Meta File)");
     println!();
     println!("Paths:");
@@ -124,8 +122,8 @@ fn print_help() {
     println!();
     println!("EXIT CODES:");
     println!("  0  Success");
-    println!("  1  File, category, or executable not found");
+    println!("  1  Not found");
     println!("  2  Key not found in either layer");
     println!("  3  Permission denied");
-    println!("  4  Invalid VMF syntax");
+    println!("  4  Invalid syntax");
 }
