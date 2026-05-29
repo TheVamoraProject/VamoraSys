@@ -1,345 +1,605 @@
-<div align="center">
+# VamoraSys Configuration Architecture
 
-# VamoraSys
+## Goal
 
-**Configuration engine for VamoraOS — manages `.vmf` files through a clean, composable CLI.**
+Create a stable and future-proof configuration system for VamoraSys that:
 
-[![GitHub Release](https://img.shields.io/github/v/release/TheVamoraProject/VamoraSys?style=flat-square&color=blue)](https://github.com/TheVamoraProject/VamoraSys/releases)
-[![GitHub Stars](https://img.shields.io/github/stars/TheVamoraProject/VamoraSys?style=flat-square&color=yellow)](https://github.com/TheVamoraProject/VamoraSys/stargazers)
-[![License](https://img.shields.io/github/license/TheVamoraProject/VamoraSys?style=flat-square&color=green)](https://github.com/TheVamoraProject/VamoraSys/blob/main/LICENSE)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/TheVamoraProject/VamoraSys/build.yml?style=flat-square)](https://github.com/TheVamoraProject/VamoraSys/actions)
-
-*A component of [VamoraOS](https://vamora.vercel.app/projects/vamoraos)*
-
-</div>
+* keeps system settings organized
+* allows apps to integrate with the Settings app
+* provides consistent theme/colors across all apps
+* avoids breaking changes later
+* supports both simple and complex apps
+* remains lightweight and easy to debug
 
 ---
 
-## 📋 Table of Contents
+# Core Principles
 
-- [Overview](#-overview)
-- [Directory Layout](#-directory-layout)
-- [VMF Format](#-vmf-format)
-- [Commands](#-commands)
-  - [settings](#settings)
-  - [vmf](#vmf)
-  - [exec](#exec)
-  - [utility](#utility)
-  - [check](#check)
-  - [info](#info)
-- [Auto-Initialization](#-auto-initialization)
-- [Behavior Reference](#-behavior-reference)
-- [Exit Codes](#-exit-codes)
-- [Design Principles](#-design-principles)
+## 1. Registry != Config
+
+Registry files only describe:
+
+* app metadata
+* settings pages
+* config backend
+* paths
+* permissions
+
+Registry files DO NOT contain actual settings.
 
 ---
 
-## 🧩 Overview
+## 2. Apps own their configs
 
-VamoraSys uses a **layered configuration system**:
+Each app stores its own settings.
 
+Examples:
+
+```text
+/etc/VamoraSys/apps/browser/settings.vmf
+/etc/VamoraSys/apps/music/settings.db
 ```
-User config  >  System default
-```
 
-Each user has their own config folder under `~/.vamorasys/`. The system provides fallback defaults under `/etc/VamoraSys/default/`. When a key is missing from the user layer, VamoraSys falls back to the system default automatically.
+The Settings app edits those files.
+
+Apps read those files.
 
 ---
 
-## 📁 Directory Layout
+## 3. System settings stay separated
 
-```
-/etc/VamoraSys/default/     System defaults / templates (root-owned)
-└── <category>/
-    ├── settings.vmf        ← default sub-category
-    ├── colors.vmf
-    └── fonts.vmf
+Core OS settings are stored only in:
 
-/etc/VamoraSys/bin/         System executables
-└── <binary>
-
-/etc/VamoraSys/utilities/   System utilities
-└── <utility>
-
-~/.vamorasys/               User settings (per-user)
-└── <category>/
-    ├── settings.vmf
-    ├── colors.vmf
-    └── fonts.vmf
+```text
+/etc/VamoraSys/settings/settings.db
 ```
 
-Each `.vmf` file inside a category folder is a **sub-category**. The file `settings.vmf` is the default sub-category used when none is specified.
+Contains:
+
+* themes
+* wallpaper
+* language
+* audio
+* networking
+* accessibility
+* appearance
+
+NOT app-specific data.
 
 ---
 
-## 📄 VMF Format
+## 4. Apps never access system internals directly
 
-VMF is a flat key-value format:
+Apps must NEVER manually parse `settings.db` or theme preset files.
+
+Instead use the stable API provided by `libvamora-settings`.
+
+This is the most important rule for long-term compatibility.
+
+---
+
+# Filesystem Layout
+
+```text
+/etc/VamoraSys/
+│
+├── settings/                     # Core OS settings
+│   │
+│   ├── settings.db               # Main SQLite database for system settings
+│   │                              # Stores ONLY OS-level settings
+│   │
+│   ├── defaults.db               # Factory/default settings backup
+│   │
+│   ├── migrations/               # Database migration scripts
+│   │   ├── v1.sql
+│   │   └── v2.sql
+│   │
+│   └── themes/                   # Installed theme definitions (NOT read by apps directly)
+│       ├── dark.theme.json
+│       ├── light.theme.json
+│       └── amoled.theme.json
+│
+│
+├── registry/                     # Settings registry — describes how Settings app loads pages
+│   │
+│   ├── browser.reg.json
+│   ├── gallery.reg.json
+│   ├── music.reg.json
+│   │
+│   ├── categories.json           # Settings categories metadata
+│   │
+│   └── schemas/                  # Validation schemas
+│       ├── registry.schema.json
+│       ├── vmf.schema.json
+│       └── theme.schema.json
+│
+│
+├── apps/                         # App-owned configuration storage
+│   │
+│   ├── browser/
+│   │   ├── settings.vmf          # Simple app settings (VMF format)
+│   │   ├── cache/                # Temporary cache data
+│   │   │   └── session.tmp
+│   │   ├── data/                 # Persistent user/app data
+│   │   │   └── bookmarks.db
+│   │   └── assets/               # App-owned assets
+│   │       └── icon.png
+│   │
+│   ├── music/
+│   │   ├── settings.db           # Complex settings database
+│   │   ├── cache/
+│   │   │   └── artwork.cache
+│   │   └── data/
+│   │       └── library.db
+│   │
+│   └── gallery/
+│       ├── settings.vmf
+│       ├── cache/
+│       └── data/
+│
+│
+├── themes/                       # Runtime active theme — what apps actually read
+│   │
+│   ├── active/                   # Currently applied theme values (compiled from theme preset)
+│   │   ├── colors.json
+│   │   ├── radius.json
+│   │   └── fonts.json
+│   │
+│   ├── defaults/                 # Fallback values used if active theme is missing a key
+│   │   ├── colors.json
+│   │   ├── radius.json
+│   │   └── fonts.json
+│   │
+│   └── wallpapers/               # System wallpapers
+│       ├── default.jpg
+│       └── dark.jpg
+│
+│
+├── device-info/                  # Device and build information
+│   │
+│   ├── hardware.json
+│   ├── firmware.json
+│   ├── build.json
+│   │
+│   └── updater/
+│       ├── channels.json
+│       └── updater.conf
+│
+│
+├── cache/                        # Global system cache
+│   ├── thumbnails/
+│   ├── package-cache/
+│   └── temp/
+│
+│
+├── logs/                         # System/service logs
+│   ├── settings.log
+│   ├── theme.log
+│   └── updater.log
+│
+│
+├── bin/                          # Vamora system CLI tools
+│   ├── vamctl                    # Settings and theme CLI utility
+│   ├── vmfctl                    # VMF file utility
+│   └── vamsettingsd              # Settings service daemon
+│
+│
+└── lib/                          # Shared Vamora libraries (also symlinked into /usr/lib/)
+    ├── libvamora-settings.so
+    └── libvmf.so
+```
+
+---
+
+# Settings Database Schema
+
+File:
+
+```text
+/etc/VamoraSys/settings/settings.db
+```
+
+Table:
+
+```sql
+CREATE TABLE settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    updated_at  INTEGER
+);
+```
+
+Example values:
+
+| key                | value  | type   |
+|--------------------|--------|--------|
+| system.theme       | dark   | string |
+| system.language    | en_US  | string |
+| display.brightness | 85     | int    |
+| audio.volume       | 70     | int    |
+
+Test data:
+
+```sql
+INSERT INTO settings VALUES
+('system.theme',       'dark',   'string', 1740000000),
+('system.language',    'en_US',  'string', 1740000000),
+('display.brightness', '85',     'int',    1740000000),
+('audio.volume',       '70',     'int',    1740000000);
+```
+
+---
+
+# Registry File Format
+
+File:
+
+```text
+/etc/VamoraSys/registry/browser.reg.json
+```
+
+Contents:
+
+```json
+{
+  "version": 1,
+
+  "id": "vamora.browser",
+  "label": "Browser",
+  "icon": "browser.png",
+
+  "category": "internet",
+
+  "config": {
+    "backend": "vmf",
+    "path": "/etc/VamoraSys/apps/browser/settings.vmf"
+  },
+
+  "settings": {
+    "visible": true,
+    "searchable": true
+  }
+}
+```
+
+---
+
+# VMF Format
+
+VMF is designed for:
+
+* simple settings
+* readability
+* easy parsing
+
+Format:
 
 ```ini
-COLOR="Blue"
-DARK_MODE="true"
-FONT_FAMILY="JetBrains Mono"
+# Browser Settings
+
+homepage=https://vamora.local
+darkmode=true
+tracking_protection=true
+
+[downloads]
+path=/home/downloads
+ask_before_download=true
 ```
 
-**Rules:**
-- Keys are `SCREAMING_SNAKE_CASE` — always
-- Multi-word keys use underscores: `FONT_FAMILY`, `DARK_MODE`
-- One key per line
-- Lines starting with `#` are comments — preserved across reads and writes
+Rules:
 
-> **📦 Categories are app-defined.** VamoraSys ships with zero categories. They are created by apps and components installed on top of VamoraOS. VamoraSys treats categories as plain directories and does not validate their names.
+* UTF-8 only
+* comments start with `#`
+* no nested objects
+* no arrays
+* keys use lowercase
+* sections are optional but allowed
 
 ---
 
-## 🛠️ Commands
+# Theme System
 
-### `settings`
+## Overview
 
-Reads and writes settings through the layer system.
+Every app should automatically match:
+
+* colors
+* accent
+* dark/light mode
+* rounded corners
+* font scaling
+
+without hardcoding values.
+
+---
+
+## Theme Preset Files
+
+Installed theme presets live at:
+
+```text
+/etc/VamoraSys/settings/themes/
+```
+
+Apps NEVER read these directly. These are source definitions, not runtime values.
+
+Example — `dark.theme.json`:
+
+```json
+{
+  "id": "dark",
+
+  "colors": {
+    "background":  "#121212",
+    "surface":     "#1e1e1e",
+    "surface_alt": "#242424",
+
+    "primary":   "#7c4dff",
+    "secondary": "#03dac6",
+
+    "text":      "#ffffff",
+    "text_muted":"#aaaaaa",
+
+    "border":  "#2c2c2c",
+
+    "success": "#4caf50",
+    "warning": "#ff9800",
+    "danger":  "#f44336"
+  },
+
+  "radius": {
+    "small":  8,
+    "medium": 16,
+    "large":  24,
+    "pill":   999
+  },
+
+  "font": {
+    "family": "Inter",
+    "scale":  1.0
+  }
+}
+```
+
+---
+
+## Active Theme (Runtime)
+
+When a theme is applied, its values are compiled into the runtime active files:
+
+```text
+/etc/VamoraSys/themes/active/colors.json
+/etc/VamoraSys/themes/active/radius.json
+/etc/VamoraSys/themes/active/fonts.json
+```
+
+Apps ONLY read from these files — never from the presets in `settings/themes/`.
+
+This indirection is what allows theme internals to change without breaking apps.
+
+Example — `colors.json`:
+
+```json
+{
+  "background":  "#121212",
+  "surface":     "#1e1e1e",
+  "surface_alt": "#242424",
+  "primary":     "#7c4dff",
+  "secondary":   "#03dac6",
+  "text":        "#ffffff",
+  "text_muted":  "#aaaaaa",
+  "border":      "#2c2c2c",
+  "success":     "#4caf50",
+  "warning":     "#ff9800",
+  "danger":      "#f44336"
+}
+```
+
+If a key is missing from the active theme, apps fall back to:
+
+```text
+/etc/VamoraSys/themes/defaults/
+```
+
+---
+
+## How Apps Access Themes
+
+Apps must use `libvamora-settings` — never parse files manually.
+
+```c
+vamora_get_color("primary")
+vamora_get_radius("medium")
+vamora_is_dark_mode()
+vamora_get_font_scale()
+```
+
+This provides a stable ABI. If theme file formats change in the future, old apps still work because the library handles compatibility.
+
+---
+
+# Stable Naming Standards
+
+These names must NEVER change once released.
+
+## Theme Color Keys
+
+```text
+background
+surface
+surface_alt
+primary
+secondary
+text
+text_muted
+border
+success
+warning
+danger
+```
+
+## Radius Keys
+
+```text
+small
+medium
+large
+pill
+```
+
+## Theme Modes
+
+```text
+light
+dark
+amoled
+auto
+```
+
+## Registry Top-Level Keys
+
+```text
+version
+id
+label
+icon
+category
+config
+settings
+```
+
+## Registry `config` Sub-Keys
+
+```text
+backend
+path
+```
+
+## Registry `settings` Sub-Keys
+
+```text
+visible
+searchable
+```
+
+---
+
+# Settings App Responsibilities
+
+The Settings app:
+
+* loads registry files from `/etc/VamoraSys/registry/`
+* displays settings pages per registry descriptors
+* edits VMF/database configs in `/etc/VamoraSys/apps/*/`
+* handles search and filtering
+* validates registry schema
+* validates setting types
+
+The Settings app does NOT:
+
+* store app data
+* own app configs
+* directly modify app runtime state
+* let apps edit registry files
+* give apps direct access to `settings.db`
+
+---
+
+# Device Info Files
+
+File:
+
+```text
+/etc/VamoraSys/device-info/hardware.json
+```
+
+Example:
+
+```json
+{
+  "model": "Vamora Dev Device",
+  "cpu": "Snapdragon 8 Gen 2",
+  "ram_mb": 8192,
+  "storage_gb": 256,
+  "display": {
+    "width": 2400,
+    "height": 1080,
+    "refresh_rate": 120
+  }
+}
+```
+
+---
+
+# CLI Reference
+
+## Settings
 
 ```bash
-# User layer (default)
-vamorasys settings <action> <category> [subcategory] <key> [value]
-
-# System layer (requires root)
-vamorasys settings <action> <category> [subcategory] <key> [value] --system
+vamctl get system.theme
+vamctl set audio.volume 70
+vamctl list
 ```
 
-The `subcategory` is optional. When omitted, the command targets `settings.vmf`. When provided, it targets `<subcategory>.vmf` inside the category folder.
-
-```
-vamorasys settings get theme COLOR          →  theme/settings.vmf
-vamorasys settings get theme colors COLOR   →  theme/colors.vmf
-```
-
----
-
-#### `put` — Add or update a key
+## Themes
 
 ```bash
-# Default sub-category (settings.vmf)
-vamorasys settings put theme COLOR Red
-
-# Explicit sub-category (colors.vmf)
-vamorasys settings put theme colors COLOR Red
+vamctl theme primary        # Read a theme color value
+vamctl set-theme dark       # Apply a theme preset
+vamctl reload-theme         # Recompile active theme from current preset
 ```
 
-Creates the key if it doesn't exist, updates it if it does. Idempotent.
-
----
-
-#### `get` — Read a value
+## VMF
 
 ```bash
-vamorasys settings get theme COLOR
-# Red
-
-vamorasys settings get theme colors COLOR
-# Red
-```
-
-Outputs the bare value to stdout. Checks user layer first, falls back to system default. Useful in scripts:
-
-```bash
-BG=$(vamorasys settings get theme colors COLOR)
+vmfctl validate settings.vmf
+vmfctl get homepage
+vmfctl set darkmode true
 ```
 
 ---
 
-#### `delete` — Remove a key
+# Shared Libraries
 
-```bash
-vamorasys settings delete theme COLOR
-vamorasys settings delete theme colors COLOR
-```
+## libvamora-settings
 
-Removes the key from the user layer only. After deletion, `get` falls back to the system default if one exists.
+Handles:
 
----
+* themes (color, radius, font access)
+* settings access
+* validation
+* config reading
+* backward compatibility across theme format versions
 
-#### `list` — Show all settings for a category or sub-category
+## libvmf
 
-```bash
-# List the default sub-category (settings.vmf)
-vamorasys settings list theme
+Handles:
 
-# List a specific sub-category (colors.vmf)
-vamorasys settings list theme colors
-```
+* VMF parsing and writing
+* schema validation
 
-```
-COLOR="Red"
-DARK_MODE="true"
-FONT_FAMILY="JetBrains Mono"
-```
-
-Shows the fully merged result — user values where set, system defaults where not. Raw VMF output, pipeable.
+Both are installed to `/etc/VamoraSys/lib/` and symlinked into `/usr/lib/` for system-wide access.
 
 ---
 
-### `vmf`
+# Long-Term Stability Rules
 
-Operates directly on any `.vmf` file, bypassing the layer system entirely. Useful for app installers and scripts.
+## NEVER:
 
-```bash
-vamorasys vmf <file> <action> [key] [value]
-```
+* rename stable theme color, radius, or font keys
+* change VMF syntax
+* remove public registry fields
+* hardcode paths in apps
+* let apps edit registry files
+* let apps directly access `settings.db`
+* let apps read theme preset files directly
 
-**Example:**
+## ALWAYS:
 
-```bash
-vamorasys vmf /etc/VamoraSys/default/theme/colors.vmf list
-vamorasys vmf /etc/VamoraSys/default/theme/colors.vmf put COLOR Blue
-```
-
----
-
-### `exec`
-
-Executes a binary from `/etc/VamoraSys/bin/`.
-
-```bash
-vamorasys exec <thing>
-```
-
-A simple, consistent way to run VamoraSys system binaries without knowing their full path.
-
----
-
-### `utility`
-
-Executes a utility from `/etc/VamoraSys/utilities/`.
-
-```bash
-vamorasys utility <thing>
-```
-
-Same idea as `exec`, but for lighter tools and helpers that ship with VamoraOS components.
-
----
-
-### `check`
-
-Ensures a category (or specific sub-category) exists in the user config. If it doesn't, copies it from the system default.
-
-```bash
-# Ensure the whole category is initialized
-vamorasys check theme
-
-# Ensure a specific sub-category file exists
-vamorasys check theme colors
-```
-
-Useful in app post-install scripts that need to guarantee a category is present before writing to it.
-
----
-
-### `info`
-
-Prints VamoraSys version, paths, and design summary.
-
-```bash
-vamorasys info
-```
-
----
-
-## ⚡ Auto-Initialization
-
-VamoraSys handles missing user directories automatically. No manual setup needed.
-
-On any command that touches the user layer:
-
-1. Does `~/.vamorasys/` exist? → No: create it
-2. Does `~/.vamorasys/<category>/` exist? → No: copy from `/etc/VamoraSys/default/<category>/`
-3. If a sub-category is specified and its `.vmf` file is missing → copy that file from the system default
-4. Proceed with the command
-
-**Example — internal flow for `vamorasys settings get theme colors COLOR`:**
-
-```
-1. Check ~/.vamorasys/ exists              → create if not
-2. Check ~/.vamorasys/theme/ exists        → copy from /etc/VamoraSys/default/theme/ if not
-3. Check ~/.vamorasys/theme/colors.vmf     → copy from system default if not
-4. Check user layer for COLOR
-5. Not found → fall back to system default
-6. Output value
-```
-
----
-
-## 📊 Behavior Reference
-
-| Situation | Behavior |
-|---|---|
-| New user, no commands run yet | Nothing created |
-| First `vamorasys` command runs | `~/.vamorasys/` created automatically |
-| Category missing from user layer | Copied from system default |
-| Sub-category file missing from user layer | That `.vmf` file copied from system default |
-| Key missing from user layer | Falls back to system default |
-| Key missing from both layers | ❌ Fails with error |
-| `--system` flag | Reads/writes `/etc/VamoraSys/default/` instead |
-| `exec <thing>` not found | ❌ Fails with error |
-| `utility <thing>` not found | ❌ Fails with error |
-
----
-
-## 🚦 Exit Codes
-
-| Code | Meaning |
-|---|---|
-| `0` | ✅ Success |
-| `1` | ❌ File, category, or executable not found |
-| `2` | ❌ Key not found in either layer |
-| `3` | 🔒 Permission denied |
-| `4` | ⚠️ Invalid VMF syntax |
-
----
-
-## 💡 Example Workflow
-
-```bash
-# App installer registers system defaults
-vamorasys settings put theme COLOR "Blue" --system
-vamorasys settings put theme colors ACCENT "#8B5CF6" --system
-vamorasys settings put theme fonts FONT_FAMILY "JetBrains Mono" --system
-
-# User customizes their own config
-vamorasys settings put theme COLOR "Red"
-vamorasys settings put theme colors ACCENT "#EF4444"
-
-# A script reads the resolved values
-COLOR=$(vamorasys settings get theme COLOR)
-ACCENT=$(vamorasys settings get theme colors ACCENT)
-
-# Direct VMF editing (bypasses layer system)
-vamorasys vmf /etc/VamoraSys/default/theme/colors.vmf list
-
-# Ensure a sub-category exists before writing to it
-vamorasys check theme fonts
-
-# Run a system binary
-vamorasys exec vamora-hello
-
-# Run a utility
-vamorasys utility fetch-updates
-```
-
----
-
-## 🎯 Design Principles
-
-- 🚫 **No daemon** — `vamorasys` is a stateless binary that reads and writes files directly
-- 🔗 **Composable** — stdout output, predictable exit codes, plays well with pipes and scripts
-- 🧱 **Flat format** — VMF has no nesting by design
-- 🔎 **Layer transparency** — `list` always shows the fully resolved merge
-- 📦 **App-driven** — VamoraSys is infrastructure; apps own their config structure
-- 🚪 **Single entry point** — settings, file editing, and execution all go through one binary
-- 🔒 **Stable API** — the main `vamorasys` binary interface never changes
-
----
-
-<div align="center">
-  <sub>Part of the <a href="https://vamora.vercel.app">Vamora</a> ecosystem · <a href="https://github.com/TheVamoraProject/VamoraSys">TheVamoraProject/VamoraSys</a></sub>
-</div>
+* version schemas (use the `version` field)
+* validate registry and theme files on load
+* keep all APIs backward compatible
+* separate cache / config / data clearly
+* use stable naming conventions from day one
+* add new keys rather than renaming existing ones
