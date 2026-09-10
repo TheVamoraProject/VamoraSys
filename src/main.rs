@@ -7,8 +7,9 @@ use config::{normalize_database_name, split_setting_key, SettingsPaths};
 use database::{
     database_for_table, delete_user_setting, discover_databases, effective_settings,
     initialize_database, is_core_database, layer_settings, list_tables, required_database_tables,
-    reset_system_setting, sync_user_defaults, table_exists, write_system_setting,
-    write_user_setting, ACCESSIBILITY_DATABASE, CORE_DATABASES, VAMIFY_DATABASE,
+    reset_system_setting, setting_from_default, sync_user_defaults, table_exists,
+    write_system_setting, write_user_setting, ACCESSIBILITY_DATABASE, CORE_DATABASES,
+    VAMIFY_DATABASE,
 };
 use release::{release_summary, ReleaseMetadata};
 use rusqlite::Connection;
@@ -18,7 +19,7 @@ use std::ffi::CStr;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command as ProcessCommand, ExitCode, Output};
 use thiserror::Error;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -62,6 +63,10 @@ enum Command {
         #[command(subcommand)]
         command: SettingsCommand,
     },
+    Keyboard {
+        #[command(subcommand)]
+        command: KeyboardCommand,
+    },
     #[command(hide = true)]
     Initialize(InitializeArgs),
 }
@@ -97,6 +102,24 @@ enum SettingsCommand {
     Tables,
 }
 
+#[derive(Subcommand, Debug)]
+enum KeyboardCommand {
+    /// Show the active layout, configured layouts, and detected Wayland backend.
+    Status,
+    /// List configured keyboard layouts.
+    List,
+    /// Add a layout to the cycle list.
+    Add { layout: String },
+    /// Remove a layout from the cycle list.
+    Remove { layout: String },
+    /// Make a configured layout active and apply it to the compositor.
+    Set { layout: String },
+    /// Select the next configured layout and apply it to the compositor.
+    Next,
+    /// Re-apply the active layout to the compositor.
+    Apply,
+}
+
 #[derive(Args, Debug)]
 struct InitializeArgs {
     #[arg(long)]
@@ -127,6 +150,7 @@ fn run(cli: Cli) -> Result<bool, AppError> {
     if !running_as_root() {
         sync_user_defaults(&paths)?;
     }
+    migrate_core_databases(&paths)?;
 
     match cli.command {
         Command::Status => run_status(&paths, cli.json),
@@ -134,11 +158,35 @@ fn run(cli: Cli) -> Result<bool, AppError> {
             run_settings(&paths, command, cli.json)?;
             Ok(true)
         }
+        Command::Keyboard { command } => {
+            run_keyboard(&paths, command, cli.json)?;
+            Ok(true)
+        }
         Command::Initialize(args) => {
             run_initialize(&paths, args, cli.json)?;
             Ok(true)
         }
     }
+}
+
+fn migrate_core_databases(paths: &SettingsPaths) -> Result<(), AppError> {
+    if running_as_root() {
+        for database in CORE_DATABASES {
+            let path = paths.system_database(database);
+            if path.is_file() {
+                initialize_database(&path, database, true)?;
+            }
+        }
+    } else {
+        for database in CORE_DATABASES {
+            let system_path = paths.system_database(database);
+            let user_path = paths.user_database(database);
+            if system_path.is_file() || user_path.is_file() {
+                initialize_database(&user_path, database, true)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_initialize(
@@ -486,6 +534,675 @@ fn settings_tables(paths: &SettingsPaths, json_output: bool) -> Result<(), AppEr
         print_table(&["DATABASE", "OWNER", "TABLE"], &rows);
     }
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct KeyboardConfig {
+    layout: String,
+    layouts: Vec<String>,
+    variant: String,
+    options: String,
+    model: String,
+}
+
+#[derive(Debug)]
+struct KeyboardApplyResult {
+    backend: String,
+    applied: bool,
+    message: String,
+}
+
+fn run_keyboard(
+    paths: &SettingsPaths,
+    command: KeyboardCommand,
+    json_output: bool,
+) -> Result<(), AppError> {
+    match command {
+        KeyboardCommand::Status => keyboard_status(paths, json_output),
+        KeyboardCommand::List => keyboard_list(paths, json_output),
+        KeyboardCommand::Add { layout } => keyboard_add(paths, &layout, json_output),
+        KeyboardCommand::Remove { layout } => keyboard_remove(paths, &layout, json_output),
+        KeyboardCommand::Set { layout } => keyboard_set(paths, &layout, json_output),
+        KeyboardCommand::Next => keyboard_next(paths, json_output),
+        KeyboardCommand::Apply => keyboard_apply(paths, json_output),
+    }
+}
+
+fn keyboard_status(paths: &SettingsPaths, json_output: bool) -> Result<(), AppError> {
+    let config = keyboard_config(paths)?;
+    let backend = keyboard_backend().to_string();
+    let wayland = is_wayland_session();
+
+    if json_output {
+        print_json(json!({
+            "database": VAMIFY_DATABASE,
+            "table": "keyboard",
+            "layout": config.layout,
+            "layouts": config.layouts,
+            "variant": config.variant,
+            "options": config.options,
+            "model": config.model,
+            "wayland": wayland,
+            "backend": backend,
+        }));
+    } else {
+        println!("{}", paint("Keyboard layout", BLUE, true));
+        println!("active: {}", config.layout);
+        println!("layouts: {}", config.layouts.join(", "));
+        println!("backend: {backend}");
+        println!(
+            "session: {}",
+            if wayland { "Wayland" } else { "not Wayland" }
+        );
+    }
+    Ok(())
+}
+
+fn keyboard_list(paths: &SettingsPaths, json_output: bool) -> Result<(), AppError> {
+    let config = keyboard_config(paths)?;
+    if json_output {
+        print_json(json!({
+            "layouts": config.layouts.iter().map(|layout| json!({
+                "layout": layout,
+                "active": layout == &config.layout,
+            })).collect::<Vec<_>>(),
+        }));
+    } else {
+        let rows = config
+            .layouts
+            .iter()
+            .map(|layout| {
+                vec![
+                    layout.clone(),
+                    if layout == &config.layout {
+                        "active".to_string()
+                    } else {
+                        String::new()
+                    },
+                ]
+            })
+            .collect::<Vec<_>>();
+        print_table(&["LAYOUT", "STATE"], &rows);
+    }
+    Ok(())
+}
+
+fn keyboard_add(
+    paths: &SettingsPaths,
+    requested_layout: &str,
+    json_output: bool,
+) -> Result<(), AppError> {
+    let layout = validate_layout(requested_layout)?;
+    let mut config = keyboard_config(paths)?;
+    if config.layouts.contains(&layout) {
+        return Err(AppError::Message(format!(
+            "keyboard layout '{layout}' is already configured"
+        )));
+    }
+    config.layouts.push(layout.clone());
+    write_keyboard_setting(paths, "layouts", &config.layouts.join(","))?;
+    print_keyboard_change(
+        "add",
+        &config,
+        None,
+        Some(format!("added {layout} to the layout cycle")),
+        json_output,
+    );
+    Ok(())
+}
+
+fn keyboard_remove(
+    paths: &SettingsPaths,
+    requested_layout: &str,
+    json_output: bool,
+) -> Result<(), AppError> {
+    let layout = validate_layout(requested_layout)?;
+    let mut config = keyboard_config(paths)?;
+    let Some(index) = config.layouts.iter().position(|item| item == &layout) else {
+        return Err(AppError::Message(format!(
+            "keyboard layout '{layout}' is not configured"
+        )));
+    };
+    if config.layouts.len() == 1 {
+        return Err(AppError::Message(
+            "cannot remove the last configured keyboard layout".to_string(),
+        ));
+    }
+
+    config.layouts.remove(index);
+    let active_changed = config.layout == layout;
+    if active_changed {
+        config.layout = config.layouts[0].clone();
+        write_keyboard_setting(paths, "layout", &config.layout)?;
+    }
+    write_keyboard_setting(paths, "layouts", &config.layouts.join(","))?;
+
+    let apply_result = if active_changed {
+        Some(apply_keyboard_layout(&config, Some(&layout)))
+    } else {
+        None
+    };
+    print_keyboard_change(
+        "remove",
+        &config,
+        apply_result.as_ref(),
+        Some(format!("removed {layout} from the layout cycle")),
+        json_output,
+    );
+    Ok(())
+}
+
+fn keyboard_set(
+    paths: &SettingsPaths,
+    requested_layout: &str,
+    json_output: bool,
+) -> Result<(), AppError> {
+    let layout = validate_layout(requested_layout)?;
+    let mut config = keyboard_config(paths)?;
+    if !config.layouts.contains(&layout) {
+        return Err(AppError::Message(format!(
+            "keyboard layout '{layout}' is not configured; add it first with `vamorasys keyboard add {layout}`"
+        )));
+    }
+
+    let previous_layout = config.layout.clone();
+    config.layout = layout;
+    write_keyboard_setting(paths, "layout", &config.layout)?;
+    let apply_result = apply_keyboard_layout(&config, Some(&previous_layout));
+    print_keyboard_change("set", &config, Some(&apply_result), None, json_output);
+    Ok(())
+}
+
+fn keyboard_next(paths: &SettingsPaths, json_output: bool) -> Result<(), AppError> {
+    let mut config = keyboard_config(paths)?;
+    let current_index = config
+        .layouts
+        .iter()
+        .position(|layout| layout == &config.layout)
+        .unwrap_or(0);
+    let next_index = (current_index + 1) % config.layouts.len();
+    let previous_layout = config.layout.clone();
+    config.layout = config.layouts[next_index].clone();
+    write_keyboard_setting(paths, "layout", &config.layout)?;
+    let apply_result = apply_keyboard_layout(&config, Some(&previous_layout));
+    print_keyboard_change("next", &config, Some(&apply_result), None, json_output);
+    Ok(())
+}
+
+fn keyboard_apply(paths: &SettingsPaths, json_output: bool) -> Result<(), AppError> {
+    let config = keyboard_config(paths)?;
+    let apply_result = apply_keyboard_layout(&config, None);
+    print_keyboard_change("apply", &config, Some(&apply_result), None, json_output);
+    Ok(())
+}
+
+fn keyboard_config(paths: &SettingsPaths) -> Result<KeyboardConfig, AppError> {
+    let layout = keyboard_setting(paths, "layout")?;
+    let layouts = parse_layouts(&keyboard_setting(paths, "layouts")?)?;
+    let mut layouts = layouts;
+    if !layouts.contains(&layout) {
+        layouts.insert(0, layout.clone());
+    }
+    Ok(KeyboardConfig {
+        layout,
+        layouts,
+        variant: keyboard_setting(paths, "variant")?,
+        options: keyboard_setting(paths, "options")?,
+        model: keyboard_setting(paths, "model")?,
+    })
+}
+
+fn keyboard_setting(paths: &SettingsPaths, key: &str) -> Result<String, AppError> {
+    if let Some(value) = effective_value(paths, VAMIFY_DATABASE, "keyboard", key)? {
+        return Ok(value);
+    }
+    setting_from_default("keyboard", key)
+        .map(|(value, _)| value.to_string())
+        .ok_or_else(|| AppError::Message(format!("keyboard setting 'keyboard.{key}' is missing")))
+}
+
+fn write_keyboard_setting(paths: &SettingsPaths, key: &str, value: &str) -> Result<(), AppError> {
+    if running_as_root() {
+        write_system_setting(paths, VAMIFY_DATABASE, "keyboard", key, value)?;
+    } else {
+        write_user_setting(paths, VAMIFY_DATABASE, "keyboard", key, value)?;
+    }
+    Ok(())
+}
+
+fn parse_layouts(value: &str) -> Result<Vec<String>, AppError> {
+    let mut layouts = Vec::new();
+    for item in value.split(',') {
+        let layout = validate_layout(item)?;
+        if !layouts.contains(&layout) {
+            layouts.push(layout);
+        }
+    }
+    if layouts.is_empty() {
+        return Err(AppError::Message(
+            "keyboard.layouts must contain at least one layout".to_string(),
+        ));
+    }
+    Ok(layouts)
+}
+
+fn validate_layout(value: &str) -> Result<String, AppError> {
+    let layout = value.trim();
+    if layout.is_empty()
+        || !layout
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_+-".contains(character))
+    {
+        return Err(AppError::Message(format!(
+            "invalid keyboard layout '{value}'; use an XKB layout name such as us or fr"
+        )));
+    }
+    Ok(layout.to_string())
+}
+
+fn print_keyboard_change(
+    action: &str,
+    config: &KeyboardConfig,
+    apply_result: Option<&KeyboardApplyResult>,
+    message: Option<String>,
+    json_output: bool,
+) {
+    let action_message = message.unwrap_or_default();
+    if json_output {
+        print_json(json!({
+            "ok": true,
+            "action": action,
+            "layout": config.layout,
+            "layouts": config.layouts,
+            "backend": apply_result.map(|result| result.backend.as_str()),
+            "applied": apply_result.map(|result| result.applied),
+            "message": if action_message.is_empty() {
+                apply_result.map(|result| result.message.as_str()).unwrap_or("")
+            } else {
+                action_message.as_str()
+            },
+        }));
+    } else {
+        if !action_message.is_empty() {
+            println!("{action_message}");
+        }
+        println!("active keyboard layout: {}", config.layout);
+        if let Some(result) = apply_result {
+            let marker = if result.applied {
+                paint("[ OK ]", GREEN, true)
+            } else {
+                paint("[WARN]", YELLOW, true)
+            };
+            println!("{marker} {}", result.message);
+        }
+    }
+}
+
+fn apply_keyboard_layout(
+    config: &KeyboardConfig,
+    previous_layout: Option<&str>,
+) -> KeyboardApplyResult {
+    let backend = keyboard_backend().to_string();
+    if !is_wayland_session() {
+        return KeyboardApplyResult {
+            backend,
+            applied: false,
+            message:
+                "saved to settings; no Wayland session is active, so the layout was not applied"
+                    .to_string(),
+        };
+    }
+
+    let result = match backend.as_str() {
+        "sway" => apply_sway_layout(config),
+        "hyprland" => apply_hyprland_layout(config),
+        "gnome" => apply_gnome_layout(config),
+        "labwc" => apply_labwc_layout(config, previous_layout),
+        _ => Err(
+            "no supported Wayland compositor adapter was detected; the layout was saved to settings"
+                .to_string(),
+        ),
+    };
+
+    match result {
+        Ok(()) => KeyboardApplyResult {
+            backend,
+            applied: true,
+            message: format!("applied {} through the Wayland compositor", config.layout),
+        },
+        Err(error) => KeyboardApplyResult {
+            backend: backend.clone(),
+            applied: false,
+            message: if backend == "labwc" {
+                error
+            } else {
+                format!("saved to settings, but the compositor rejected the layout: {error}")
+            },
+        },
+    }
+}
+
+fn apply_sway_layout(config: &KeyboardConfig) -> Result<(), String> {
+    let mut commands = vec![vec![
+        "input".to_string(),
+        "type:keyboard".to_string(),
+        "xkb_layout".to_string(),
+        config.layouts.join(","),
+    ]];
+    if !config.variant.is_empty() {
+        commands.push(vec![
+            "input".to_string(),
+            "type:keyboard".to_string(),
+            "xkb_variant".to_string(),
+            config.variant.clone(),
+        ]);
+    }
+    if !config.options.is_empty() {
+        commands.push(vec![
+            "input".to_string(),
+            "type:keyboard".to_string(),
+            "xkb_options".to_string(),
+            config.options.clone(),
+        ]);
+    }
+    commands.push(vec![
+        "input".to_string(),
+        "type:keyboard".to_string(),
+        "xkb_model".to_string(),
+        config.model.clone(),
+    ]);
+    let active_index = config
+        .layouts
+        .iter()
+        .position(|layout| layout == &config.layout)
+        .unwrap_or(0);
+    commands.push(vec![
+        "input".to_string(),
+        "type:keyboard".to_string(),
+        "xkb_switch_layout".to_string(),
+        active_index.to_string(),
+    ]);
+    for arguments in commands {
+        run_keyboard_command("swaymsg", &arguments)?;
+    }
+    Ok(())
+}
+
+fn apply_hyprland_layout(config: &KeyboardConfig) -> Result<(), String> {
+    let commands = [
+        ("input:kb_layout", config.layouts.join(",")),
+        ("input:kb_variant", config.variant.clone()),
+        ("input:kb_options", config.options.clone()),
+        ("input:kb_model", config.model.clone()),
+    ];
+    for (key, value) in commands {
+        run_keyboard_command("hyprctl", &["keyword".to_string(), key.to_string(), value])?;
+    }
+    let active_index = config
+        .layouts
+        .iter()
+        .position(|layout| layout == &config.layout)
+        .unwrap_or(0);
+    run_keyboard_command(
+        "hyprctl",
+        &[
+            "switchxkblayout".to_string(),
+            "all".to_string(),
+            active_index.to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn apply_gnome_layout(config: &KeyboardConfig) -> Result<(), String> {
+    let sources = config
+        .layouts
+        .iter()
+        .map(|layout| {
+            if config.variant.is_empty() {
+                format!("('xkb', '{layout}')")
+            } else {
+                format!("('xkb', '{layout}+{}')", config.variant)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    run_keyboard_command(
+        "gsettings",
+        &[
+            "set".to_string(),
+            "org.gnome.desktop.input-sources".to_string(),
+            "sources".to_string(),
+            format!("[{sources}]"),
+        ],
+    )?;
+    let current_index = config
+        .layouts
+        .iter()
+        .position(|layout| layout == &config.layout)
+        .unwrap_or(0);
+    run_keyboard_command(
+        "gsettings",
+        &[
+            "set".to_string(),
+            "org.gnome.desktop.input-sources".to_string(),
+            "current".to_string(),
+            current_index.to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn apply_labwc_layout(
+    config: &KeyboardConfig,
+    previous_layout: Option<&str>,
+) -> Result<(), String> {
+    let config_directory = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join(".config"))
+        })
+        .ok_or_else(|| "cannot determine the user config directory".to_string())?;
+    let labwc_directory = config_directory.join("labwc");
+    let environment_path = labwc_directory.join("environment");
+
+    fs::create_dir_all(&labwc_directory)
+        .map_err(|error| format!("could not create {}: {error}", labwc_directory.display()))?;
+    let existing = match fs::read_to_string(&environment_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(format!(
+                "could not read {}: {error}",
+                environment_path.display()
+            ))
+        }
+    };
+    let existing_layouts = labwc_environment_value(&existing, "XKB_DEFAULT_LAYOUT")
+        .map(|value| value.split(',').map(str::trim).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    let mut ordered_layouts = vec![config.layout.clone()];
+    ordered_layouts.extend(
+        config
+            .layouts
+            .iter()
+            .filter(|layout| *layout != &config.layout)
+            .cloned(),
+    );
+    let options = if config.options.is_empty() && ordered_layouts.len() > 1 {
+        "grp:alt_shift_toggle".to_string()
+    } else {
+        config.options.clone()
+    };
+    let mut managed_lines = vec![
+        format!("XKB_DEFAULT_LAYOUT={}", ordered_layouts.join(",")),
+        format!("XKB_DEFAULT_VARIANT={}", config.variant),
+        format!("XKB_DEFAULT_OPTIONS={options}"),
+        format!("XKB_DEFAULT_MODEL={}", config.model),
+    ];
+
+    let mut preserved = existing
+        .lines()
+        .filter(|line| {
+            ![
+                "XKB_DEFAULT_LAYOUT",
+                "XKB_DEFAULT_VARIANT",
+                "XKB_DEFAULT_OPTIONS",
+                "XKB_DEFAULT_MODEL",
+            ]
+            .iter()
+            .any(|key| labwc_environment_key(line) == Some(*key))
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if !preserved.is_empty() && preserved.last().is_some_and(|line| !line.is_empty()) {
+        preserved.push(String::new());
+    }
+    preserved.append(&mut managed_lines);
+    let mut contents = preserved.join("\n");
+    contents.push('\n');
+    fs::write(&environment_path, contents)
+        .map_err(|error| format!("could not write {}: {error}", environment_path.display()))?;
+
+    let reconfigure = ProcessCommand::new("labwc")
+        .arg("--reconfigure")
+        .output()
+        .map_err(|error| {
+            format!("settings saved, but could not run labwc --reconfigure: {error}")
+        })?;
+    if !reconfigure.status.success() {
+        let detail = String::from_utf8_lossy(&reconfigure.stderr)
+            .trim()
+            .to_string();
+        return Err(if detail.is_empty() {
+            format!(
+                "settings saved to {}; labwc --reconfigure failed; restart labwc to load them",
+                environment_path.display()
+            )
+        } else {
+            format!(
+                "settings saved to {}; labwc --reconfigure failed: {detail}; restart labwc to load them",
+                environment_path.display()
+            )
+        });
+    }
+
+    let can_switch_loaded_layout = previous_layout.is_some_and(|previous| {
+        previous != config.layout
+            && existing_layouts
+                .iter()
+                .any(|layout| *layout == config.layout)
+            && existing_layouts.iter().any(|layout| *layout == previous)
+    });
+    if can_switch_loaded_layout {
+        if let Err(error) = run_keyboard_command(
+            "wtype",
+            &[
+                "-M".to_string(),
+                "alt".to_string(),
+                "-P".to_string(),
+                "shift".to_string(),
+                "-p".to_string(),
+                "shift".to_string(),
+                "-m".to_string(),
+                "alt".to_string(),
+            ],
+        ) {
+            return Err(format!(
+                "saved {}; could not switch the already-loaded layout with wtype: {error}; restart labwc to load the selected layout",
+                environment_path.display()
+            ));
+        }
+        return Ok(());
+    }
+
+    Err(format!(
+        "saved {} and reconfigured labwc, but labwc must be restarted once to load the new XKB map; after that use Alt+Shift to cycle layouts",
+        environment_path.display()
+    ))
+}
+
+fn labwc_environment_key(line: &str) -> Option<&str> {
+    let line = line.trim_start();
+    let line = line.strip_prefix("export ").unwrap_or(line);
+    let (key, _) = line.split_once('=')?;
+    match key {
+        "XKB_DEFAULT_LAYOUT"
+        | "XKB_DEFAULT_VARIANT"
+        | "XKB_DEFAULT_OPTIONS"
+        | "XKB_DEFAULT_MODEL" => Some(key),
+        _ => None,
+    }
+}
+
+fn labwc_environment_value<'a>(contents: &'a str, wanted_key: &str) -> Option<&'a str> {
+    contents.lines().find_map(|line| {
+        if labwc_environment_key(line) == Some(wanted_key) {
+            line.trim_start()
+                .strip_prefix("export ")
+                .unwrap_or(line.trim_start())
+                .split_once('=')
+                .map(|(_, value)| value.trim())
+        } else {
+            None
+        }
+    })
+}
+
+fn run_keyboard_command(program: &str, arguments: &[String]) -> Result<(), String> {
+    let output: Output = ProcessCommand::new(program)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("could not run {program}: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if detail.is_empty() {
+        Err(format!("{program} exited with {}", output.status))
+    } else {
+        Err(detail)
+    }
+}
+
+fn is_wayland_session() -> bool {
+    std::env::var("WAYLAND_DISPLAY").is_ok()
+        || std::env::var("XDG_SESSION_TYPE")
+            .map(|value| value.eq_ignore_ascii_case("wayland"))
+            .unwrap_or(false)
+}
+
+fn keyboard_backend() -> &'static str {
+    let desktop = [
+        std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default(),
+        std::env::var("XDG_SESSION_DESKTOP").unwrap_or_default(),
+        std::env::var("DESKTOP_SESSION").unwrap_or_default(),
+    ]
+    .join(":")
+    .to_ascii_lowercase();
+
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() || desktop.contains("hyprland") {
+        "hyprland"
+    } else if std::env::var_os("SWAYSOCK").is_some() || desktop.contains("sway") {
+        "sway"
+    } else if desktop.contains("gnome") {
+        "gnome"
+    } else if desktop.contains("labwc") || process_running("labwc") {
+        "labwc"
+    } else {
+        "unsupported"
+    }
+}
+
+fn process_running(name: &str) -> bool {
+    ProcessCommand::new("pgrep")
+        .args(["-x", name])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn run_status(paths: &SettingsPaths, json_output: bool) -> Result<bool, AppError> {
@@ -931,5 +1648,15 @@ mod tests {
                 .as_deref(),
             Some("monday")
         );
+    }
+
+    #[test]
+    fn keyboard_layouts_are_validated_and_deduplicated() {
+        assert_eq!(
+            parse_layouts("us, fr, us").unwrap(),
+            vec!["us".to_string(), "fr".to_string()]
+        );
+        assert!(parse_layouts("us,").is_err());
+        assert!(validate_layout("us;rm").is_err());
     }
 }

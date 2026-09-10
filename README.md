@@ -24,6 +24,12 @@ vamorasys settings list vamify.db
 vamorasys settings dump vamify.db
 vamorasys settings databases
 vamorasys settings tables
+vamorasys keyboard status
+vamorasys keyboard list
+vamorasys keyboard add fr
+vamorasys keyboard set fr
+vamorasys keyboard next
+vamorasys keyboard apply
 vamorasys --json status
 vamorasys --json settings list vamify.db
 ```
@@ -61,6 +67,54 @@ exists. Without `sudo`, `reset` removes only the current user's value.
 All databases under `settings/apps/` are discovered, displayed, and layered
 the same way as core settings databases. App setting commands require
 `--database` because app tables are owned by the app.
+
+The `vamify.db` database includes `statusbar.size`, `statusbar.transparency`,
+`dock.position`, and an `icons` table. `statusbar.size` defaults to 30 px and
+accepts values from 29 to 128 px. For comparison, a standard Windows 10/11
+taskbar is usually about 48 px at 100% display scaling. Icon settings include
+`icons.corner_radius`, `icons.style`, `icons.bg_color`, `icons.stroke`, and
+`icons.stroke_color`. The supported icon styles are `normal`, `light`, `dark`,
+and `single_color`; colors accept any standard `#RGB`, `#RGBA`, `#RRGGBB`, or
+`#RRGGBBAA` value.
+The keyboard manager stores its configuration in the `keyboard` table:
+
+```bash
+vamorasys settings get statusbar.size
+vamorasys settings set statusbar.size 36
+vamorasys settings set statusbar.transparency true
+vamorasys settings set dock.position left
+vamorasys settings set keyboard.layouts us,fr
+```
+
+Built-in VamoraOS settings are validated before they are written. For example,
+themes must be `light`, `dark`, or `system`; dock positions must be `top`,
+`bottom`, `left`, or `right`; colors must be hexadecimal; and numeric settings
+are checked against their supported ranges. Unknown settings in core databases
+are rejected. App databases remain extensible because each app owns and
+defines its own settings schema.
+
+Wayland does not define a compositor-independent keyboard-layout control
+protocol. `vamorasys keyboard` therefore keeps the configuration in the
+database and applies it at runtime through compositor adapters for Sway,
+Hyprland, GNOME, and labwc:
+
+```bash
+vamorasys keyboard add fr
+vamorasys keyboard set fr
+vamorasys keyboard next
+vamorasys keyboard status
+```
+
+On another compositor, the layout is still persisted and `keyboard status`
+reports `unsupported`; add a compositor adapter before treating runtime
+application as available.
+
+labwc reads its XKB map from `~/.config/labwc/environment`. VamoraSys
+preserves the rest of that file, writes the selected layout first, and runs
+`labwc --reconfigure`. labwc does not rebuild the active XKB map during a
+reconfigure, so changing to a layout that was not already loaded requires
+restarting labwc once. When multiple layouts are configured, the adapter adds
+`grp:alt_shift_toggle`, so `Alt+Shift` cycles them after the restart.
 
 Add `--json` before or after the command to receive valid pretty-printed JSON
 for status, settings, initialization, and errors. JSON output never contains
