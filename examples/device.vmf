@@ -1,0 +1,37 @@
+# /etc/VamoraSys/device.vmf
+# WARNING: A WRONG VALUE IN THIS FILE CAN MAKE APPS ADAPT BADLY TO THIS DEVICE (SCREEN LAYOUT, ANIMATIONS, PERFORMANCE)
+# Only change it if you know what this device is. Delete this file to go back to automatic detection.
+# Written by the device image (OEM), or by `vamorasys device setup`. Read by `vamorasys device`; apps ask VamoraSys, never this file.
+# Same syntax as vamora-release.vmf: KEY="value", UPPERCASE keys, # for comments.
+
+VMF_VERSION="1"
+
+# --- What the device is -------------------------------------------------------
+# Authoritative: skips auto-detection. Leave empty to auto-detect.
+# phone | flip-phone | foldable-phone | tablet | foldable-tablet
+# laptop | foldable-laptop | cyberdeck | desktop | tv | watch
+FORM_FACTOR="foldable-laptop"
+
+# Foldables only, optional: book (opens like a book) or flip (clamshell).
+FOLD_STYLE="book"
+
+# --- How much power it has ----------------------------------------------------
+# budget | entry | midrange | flagship
+# Leave empty to estimate it from RAM and CPU (the weaker of the two wins).
+TIER="flagship"
+
+# --- Optional: replace single adaptation hints --------------------------------
+# Defaults per tier (budget / entry / midrange / flagship):
+#   ANIMATIONS            minimal / reduced / full / full
+#   BLUR                  off / off / on / on
+#   TARGET_FPS            30 / 60 / 60 / 120   (apps also cap by the display refresh rate)
+#   BACKGROUND_PROCESSES  2 / 4 / 8 / 16
+#   PRELOAD               off / off / on / on
+#   IMAGE_CACHE_MB        16 / 48 / 128 / 256
+# Uncomment only what this device must do differently:
+# ANIMATIONS="full"
+# BLUR="on"
+# TARGET_FPS="90"
+# BACKGROUND_PROCESSES="12"
+# PRELOAD="on"
+# IMAGE_CACHE_MB="192"
